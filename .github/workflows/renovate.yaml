@@ -3,15 +3,15 @@ on:
   workflow_dispatch:
     inputs:
       repoCache:
-        description: 'Reset or disable the cache?'
+        description: "Reset or disable the cache?"
         type: choice
         default: enabled
         options:
           - enabled
           - disabled
           - reset
-  schedule:
-    - cron: '0/15 * * * *'
+  # schedule:
+  #   - cron: '0/15 * * * *'
 
 env:
   cache_archive: renovate_cache.tar.gz
@@ -75,7 +75,7 @@ jobs:
         uses: renovatebot/github-action@3cef36a9aba515d8726b491905b3bc766832e221 # v39.0.5
         with:
           configurationFile: renovate.js
-          token: '${{ steps.get_token.outputs.token }}'
+          token: "${{ steps.get_token.outputs.token }}"
         env:
           # RENOVATE_PACKAGE_TOKEN: ${{ secrets.PACKAGE_TOKEN }}
           # This enables the cache -- if this is set, it's not necessary to add it to renovate.json.
