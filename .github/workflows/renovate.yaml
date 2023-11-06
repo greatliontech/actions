@@ -34,7 +34,7 @@ jobs:
           app_id: ${{ vars.GLT_RENOVATE_APP_ID }}
 
       - name: Checkout
-        uses: actions/checkout@v4.1.0
+        uses: actions/checkout@v4.1.1
         #
         # This third party action allows you to download the cache artifact from different workflow runs
         # Note that actions/cache doesn't work well because the cache key would need to be computed from
