@@ -32,6 +32,7 @@ jobs:
         with:
           app-id: ${{ vars.GLT_RENOVATE_APP_ID }}
           private-key: ${{ secrets.GLT_RENOVATE_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
 
       - name: Checkout
         uses: actions/checkout@v4.1.0
