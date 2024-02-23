@@ -1,6 +1,6 @@
 module.exports = {
   onboarding: false,
-  requireConfig: false,
+  requireConfig: "optional",
   platform: "github",
   platformCommit: true,
   autodiscover: true,
