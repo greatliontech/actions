@@ -11,16 +11,16 @@ callers are.
 
 ## Workflows
 
-- `go-gate.yml` — the release gate: the plain tier (build, vet, the
-  fast tier — `-short`, or the caller's `short-args`: a bare run where
-  the suites default to -short themselves — and the full tier under
-  the caller's measured timeout), the race tier (opt-in: the
-  repository's own race selection), the records tier (opt-in: the requirement corpus compiles
-  and every binding is current and resolved). The caller pins
-  `go-version` to a listed toolchain, never `stable`, and a race
-  caller passes its own measured budget (`race-timeout`,
-  `race-job-minutes`) — the gate refuses a race tier without one.
-  Inputs are documented in the file.
+- `go-gate.yml` — the release gate: the plain tier (build, vet, the fast
+  tier — `-short`, or the caller's `short-args`: a bare run where the
+  suites default to -short themselves — and the full tier under the
+  caller's measured timeout), the race tier (opt-in: the repository's
+  own race selection), the records tier (opt-in: the requirement corpus
+  compiles and every binding is current and resolved). The caller pins
+  `go-version` to a listed toolchain, never `stable`, and a race caller
+  passes its own measured budget (`race-timeout`, `race-job-minutes`) —
+  the gate refuses a race tier without one. Inputs are documented in the
+  file.
 - `go-release.yml` — the release: called on `workflow_run` of the gate
   (completed, on main) under a serializing concurrency group; cuts a
   tag only for a push run of the caller's own repository whose judged
