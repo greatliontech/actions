@@ -1,0 +1,210 @@
+name: Go gate
+
+# The fleet's release gate as one reusable workflow: the plain tier, the
+# race tier and the records tier judge the PUSHED commit; a repository's
+# release workflow (go-release.yml) cuts a tag only after every job here
+# succeeded on it. Each repository calls this with its own inputs — the
+# toolchain it pins, its tiers' commands and budgets, whether it runs
+# the race detector (the policy's own race selection) and the records
+# tier (a stipulator-adopted repository) — so a change to the gate's
+# contract lands in every caller at once.
+#
+# GOTOOLCHAIN=local pins each leg to the toolchain it installed: auto
+# would silently substitute the go.mod-resolved toolchain and measure
+# nothing. The caller pins `go-version` to a LISTED toolchain (its
+# audit canary's row), never `stable`: on `stable` a commit's
+# releasability changes with Go's release calendar, not with the
+# commit — the first point release reds every release until a listing
+# lands. The go-next.yml legs are the early warning for that move.
+
+on:
+  workflow_call:
+    inputs:
+      go-version:
+        description: the pinned toolchain (a listed release, never `stable`)
+        required: true
+        type: string
+      pattern:
+        description: the package pattern every tier builds, vets and tests
+        required: false
+        type: string
+        default: ./...
+      pre:
+        description: a shell step before the tiers (a formatting or tidy check); empty runs none
+        required: false
+        type: string
+        default: ""
+      vet-tags:
+        description: a second vet under these build tags; empty runs none
+        required: false
+        type: string
+        default: ""
+      short:
+        description: run the fast tier (`go test -short`) before the full tier
+        required: false
+        type: boolean
+        default: true
+      short-timeout:
+        description: the fast tier's go test timeout
+        required: false
+        type: string
+        default: 5m
+      pre-full:
+        description: a shell step between the fast and the full tier; empty runs none
+        required: false
+        type: string
+        default: ""
+      full-args:
+        description: extra go test arguments on the full tier (a repository whose suites default to -short passes -short=false)
+        required: false
+        type: string
+        default: ""
+      full-timeout:
+        description: the full tier's go test timeout — the measured suite budget with its headroom
+        required: true
+        type: string
+      test-job-minutes:
+        description: the test job's ceiling
+        required: false
+        type: number
+        default: 60
+      race:
+        description: run the race tier (the policy's own race selection)
+        required: false
+        type: boolean
+        default: false
+      race-p:
+        description: the race tier's -p (race binaries' heaps are 5–10x the plain heap)
+        required: false
+        type: number
+        default: 2
+      race-timeout:
+        description: the race tier's go test timeout — the caller's OWN measured budget (a race caller passes it; a race tier under another repository's measurement is refused)
+        required: false
+        type: string
+        default: ""
+      race-job-minutes:
+        description: the race job's ceiling — the caller's own; 0 refuses a race tier without one
+        required: false
+        type: number
+        default: 0
+      records:
+        description: run the records tier (the requirement corpus compiles, every binding current and resolved)
+        required: false
+        type: boolean
+        default: false
+      stipulator-version:
+        description: the stipulator release the records tier installs (a corpus-format move is a deliberate bump)
+        required: false
+        type: string
+        default: v0.66.1
+
+jobs:
+  # The plain tier: build, vet, the fast tier (the engine's code without
+  # the engine over a tree, so a code defect fails here before the
+  # minutes-class tier spends its budget), the full tier under the
+  # caller's measured timeout. A budget overrun is a real finding (a
+  # hang, or a suite outgrowing its budget) — re-measure before raising
+  # the number.
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.test-job-minutes }}
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+      - if: inputs.pre != ''
+        shell: bash
+        run: ${{ inputs.pre }}
+      - run: go build ${{ inputs.pattern }}
+      - run: go vet ${{ inputs.pattern }}
+      - if: inputs.vet-tags != ''
+        run: go vet -tags ${{ inputs.vet-tags }} ${{ inputs.pattern }}
+      - if: inputs.short
+        run: go test -short ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.short-timeout }}
+      - if: inputs.pre-full != ''
+        shell: bash
+        run: ${{ inputs.pre-full }}
+      - run: go test ${{ inputs.full-args }} ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.full-timeout }}
+
+  # The race tier: every witness the repository's policy binds runs
+  # under the race detector on every push, off the shared development
+  # machine. The race build is cached under its own key: setup-go's
+  # cache is keyed on go.sum alone and the plain job saves it first, so
+  # the race job would cold-build on every run otherwise. A key per
+  # commit: a cache saves only on a miss, so a key fixed per go.sum
+  # would freeze the build cache at the first run and cold-build every
+  # later source change. Only main SAVES (a race-mode build cache is
+  # GB-class; one entry per PR push would press the repository's 10 GB
+  # cache limit and evict the plain tier's cache); PR runs restore from
+  # main's entries.
+  race:
+    if: inputs.race
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.race-job-minutes == 0 && 1 || inputs.race-job-minutes }}
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      # A race tier runs under its caller's own measured budget, never
+      # under another repository's: a caller that asks for the tier
+      # without its budget is refused here, before anything builds.
+      - if: inputs.race-timeout == '' || inputs.race-job-minutes == 0
+        shell: bash
+        run: |
+          echo "race: true needs the caller's own race-timeout and race-job-minutes (its measured budget)" >&2
+          exit 1
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+          cache: false
+      - uses: actions/cache/restore@v4
+        id: race-cache
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: race-${{ runner.os }}-${{ hashFiles('go.sum') }}-${{ github.sha }}
+          restore-keys: |
+            race-${{ runner.os }}-${{ hashFiles('go.sum') }}-
+            race-${{ runner.os }}-
+      - run: go test -race -p ${{ inputs.race-p }} ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.race-timeout }}
+      - uses: actions/cache/save@v4
+        if: github.ref == 'refs/heads/main'
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: ${{ steps.race-cache.outputs.cache-primary-key }}
+
+  # The records tier: the requirement corpus compiles and every binding
+  # resolves to a current symbol at a consented pin — the half of the
+  # gate the test tiers cannot see. Records-only: no witness executes
+  # here (the tiers above are the execution); stipulator is pinned to a
+  # release so a corpus-format move is a deliberate bump.
+  records:
+    if: inputs.records
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ inputs.go-version }}
+      - run: go install github.com/greatliontech/stipulator/cmd/stipulator@${{ inputs.stipulator-version }}
+      - run: stipulator compile
+      - name: Every binding current and resolved
+        shell: bash
+        run: |
+          stipulator verify --no-test --view bindings > bindings.txt
+          if grep -E 'REQ-' bindings.txt | grep -vE ' current +resolved ' | grep -q .; then
+            echo "bindings not current and resolved:" >&2
+            grep -E 'REQ-' bindings.txt | grep -vE ' current +resolved ' >&2
+            exit 1
+          fi
+          grep -cE ' current +resolved ' bindings.txt

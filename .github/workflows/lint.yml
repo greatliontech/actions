@@ -1,0 +1,21 @@
+name: Lint
+
+# A bad push here reds every calling repository's gate at once, so the
+# workflows are linted on every change before they are the fleet's.
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  actionlint:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+      - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - run: ~/go/bin/actionlint

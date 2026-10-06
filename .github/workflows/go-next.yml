@@ -1,0 +1,146 @@
+name: Go next
+
+# The early-warning legs as one reusable workflow — never a gate: a
+# caller runs them beside its gate (same triggers) and its release
+# never waits for them. Two legs:
+#
+# next-rc: the pre-release leg. go.dev/dl orders by version, newest
+# first, so an unstable entry at the top is exactly "a candidate newer
+# than every stable release" — the freeze-window signal (a point
+# release cannot mask it: go1.N+1rc1 sorts above every go1.N.x). A
+# stable top entry means no candidate is published and the leg no-ops
+# — but only after the resolver AFFIRMS it parsed a plausible version
+# AND a plausible stability flag, so a broken endpoint or a moved
+# schema fails the job instead of impersonating the quiet season. When
+# a candidate exists, its failure is LOUD: the structural prevention
+# for release-day toolchain breakage, surfaced months early.
+#
+# next-stable: the point-release leg. The gate pins a listed toolchain,
+# so a stable point release that moves a repository's audited bytes
+# never reds the gate — it reds here, on `stable`, as soon as the
+# release is published: the listing lands before the pin moves. The
+# leg runs the fast tier alone (build, vet, `-short`): the audit
+# canary and every fast pin live there, and the full tier under a
+# toolchain the gate does not run would double every push's cost for
+# nothing the canary does not already say.
+
+on:
+  workflow_call:
+    inputs:
+      pattern:
+        description: the package pattern the legs build, vet and test
+        required: false
+        type: string
+        default: ./...
+      pre:
+        description: a shell step before the tiers; empty runs none
+        required: false
+        type: string
+        default: ""
+      vet-tags:
+        description: a second vet under these build tags; empty runs none
+        required: false
+        type: string
+        default: ""
+      short:
+        description: run the fast tier (`go test -short`) — the next-stable leg's whole tier
+        required: false
+        type: boolean
+        default: true
+      short-timeout:
+        description: the fast tier's go test timeout
+        required: false
+        type: string
+        default: 5m
+      pre-full:
+        description: a shell step between the fast and the full tier on the next-rc leg; empty runs none
+        required: false
+        type: string
+        default: ""
+      full-args:
+        description: extra go test arguments on the next-rc leg's full tier
+        required: false
+        type: string
+        default: ""
+      full-timeout:
+        description: the next-rc leg's full-tier go test timeout
+        required: true
+        type: string
+      job-minutes:
+        description: each leg's job ceiling
+        required: false
+        type: number
+        default: 60
+
+jobs:
+  next-rc:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.job-minutes }}
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - name: Resolve the next Go release candidate
+        id: rc
+        # shell: bash is load-bearing: it switches Actions to
+        # `bash -eo pipefail`, so a curl failure inside the pipe fails
+        # this step instead of yielding an empty version that reads as
+        # a legitimate no-op.
+        shell: bash
+        run: |
+          top=$(curl -fsSL 'https://go.dev/dl/?mode=json&include=all' | jq -r '.[0] | "\(.version) \(.stable)"')
+          case "$top" in
+            go1.*" true" | go1.*" false") ;;
+            *) echo "resolver broke: top dl entry is '$top'" >&2; exit 1 ;;
+          esac
+          version=""
+          [ "${top##* }" = "false" ] && version="${top%% *}"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "${version:-no pre-release published; leg is a no-op}"
+      - name: Install the release candidate
+        if: steps.rc.outputs.version != ''
+        shell: bash
+        run: |
+          go install "golang.org/dl/${{ steps.rc.outputs.version }}@latest"
+          wrapper="$(go env GOPATH)/bin/${{ steps.rc.outputs.version }}"
+          "$wrapper" download
+          echo "$("$wrapper" env GOROOT)/bin" >> "$GITHUB_PATH"
+      - if: steps.rc.outputs.version != '' && inputs.pre != ''
+        shell: bash
+        run: ${{ inputs.pre }}
+      - if: steps.rc.outputs.version != ''
+        run: go version && go build ${{ inputs.pattern }}
+      - if: steps.rc.outputs.version != ''
+        run: go vet ${{ inputs.pattern }}
+      - if: steps.rc.outputs.version != '' && inputs.vet-tags != ''
+        run: go vet -tags ${{ inputs.vet-tags }} ${{ inputs.pattern }}
+      - if: steps.rc.outputs.version != '' && inputs.short
+        run: go test -short ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.short-timeout }}
+      - if: steps.rc.outputs.version != '' && inputs.pre-full != ''
+        shell: bash
+        run: ${{ inputs.pre-full }}
+      - if: steps.rc.outputs.version != ''
+        run: go test ${{ inputs.full-args }} ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.full-timeout }}
+
+  next-stable:
+    runs-on: ubuntu-latest
+    timeout-minutes: ${{ inputs.job-minutes }}
+    env:
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: stable
+      - if: inputs.pre != ''
+        shell: bash
+        run: ${{ inputs.pre }}
+      - run: go version && go build ${{ inputs.pattern }}
+      - run: go vet ${{ inputs.pattern }}
+      - if: inputs.vet-tags != ''
+        run: go vet -tags ${{ inputs.vet-tags }} ${{ inputs.pattern }}
+      - if: inputs.short
+        run: go test -short ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.short-timeout }}

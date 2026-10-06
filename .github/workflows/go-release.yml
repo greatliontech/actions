@@ -1,0 +1,83 @@
+name: Go release
+
+# The fleet's release as one reusable workflow. A caller triggers it on
+# `workflow_run` of its gate workflow (go-gate.yml, completed, on
+# main) under a serializing concurrency group, so a tag is cut only
+# after the plain, race and records tiers succeeded on the pushed
+# commit; a push whose gate is red or still running produces no
+# release, and the gate cannot be skipped on the automated path (a
+# manual tag is outside it). Three rules keep the tag on the commit the
+# gate judged, read off the CALLER's workflow_run event (a called
+# workflow sees the caller's github context): (1) the event is a PUSH
+# run of the caller's own repository (a fork's branch named main runs
+# the gate as a pull request and would otherwise fire this with the
+# app's secrets); (2) releases serialize and a superseded commit
+# releases nothing — when origin/main has moved past the judged
+# commit, the newer commit's own green run releases, so two runs
+# finishing out of order never cut a version over older content with
+# the whole history as its notes (semrel takes the highest tag in the
+# repository and walks back from HEAD to it); the caller's concurrency
+# group holds one running and one pending run, so a third arrival
+# cancels the pending one — if the tip's run was the one cancelled,
+# re-run it by hand or let the next green push release the missed
+# commits with its own (fail-safe: no wrong tag is cut); (3) semrel's
+# target is the judged commit itself (SEMREL_BRANCH names it), never
+# the branch tip, so a commit pushed during the race tier's hour is
+# not tagged on an earlier commit's verdict.
+#
+# The caller passes `secrets: inherit` (the releaser app's private key)
+# and grants `permissions: contents: write`; the app id is the caller's
+# repository or organization variable GLT_RELEASER_APP_ID. The caller's
+# `workflow_run` subscription names its gate workflow; nothing here
+# spells the name a second time. Callers reference `@main`: the gate
+# and the release are whatever `main` holds at run time, so a change
+# here reaches every repository at once and every caller's secret
+# reaches this file — so `main` is protected (no force push, no
+# deletion, the lint check required on a pull request) and only the
+# organization's owners push to it.
+
+on:
+  workflow_call:
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_run' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      SEMREL_BRANCH: ${{ github.event.workflow_run.head_sha }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+      - name: Release only the current tip of main
+        id: tip
+        shell: bash
+        run: |
+          git fetch origin main
+          if [ "$(git rev-parse origin/main)" != "${{ github.event.workflow_run.head_sha }}" ]; then
+            echo "superseded: origin/main moved past the judged commit; its own gate run releases"
+            echo "release=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "release=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/create-github-app-token@v2
+        if: steps.tip.outputs.release == 'true'
+        id: app-token
+        with:
+          app-id: ${{ vars.GLT_RELEASER_APP_ID }}
+          private-key: ${{ secrets.GLT_RELEASER_APP_KEY }}
+
+      - uses: greatliontech/semrel@main
+        if: steps.tip.outputs.release == 'true'
+        with:
+          release: true
+          releaseToken: ${{ steps.app-token.outputs.token }}
