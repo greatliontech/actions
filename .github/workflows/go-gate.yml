@@ -104,6 +104,11 @@ on:
         required: false
         type: string
         default: v0.66.1
+      stipulator-from-tree:
+        description: the records tier builds stipulator from the caller's own tree (./cmd/stipulator) instead of installing the release — the tool's own repository, where a pinned release could not read a record-format move the tree makes and no tag could ever be cut to move the pin
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   # The plain tier: build, vet, the fast tier (the engine's code without
@@ -202,7 +207,13 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: ${{ inputs.go-version }}
-      - run: go install github.com/greatliontech/stipulator/cmd/stipulator@${{ inputs.stipulator-version }}
+      - if: ${{ !inputs.stipulator-from-tree }}
+        run: go install github.com/greatliontech/stipulator/cmd/stipulator@${{ inputs.stipulator-version }}
+      - if: inputs.stipulator-from-tree
+        shell: bash
+        run: |
+          go build -o "$RUNNER_TEMP/stipulator" ./cmd/stipulator
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
       - run: stipulator compile
       - name: Every binding current and resolved
         shell: bash
