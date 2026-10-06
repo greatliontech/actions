@@ -11,8 +11,8 @@ name: Go gate
 #
 # GOTOOLCHAIN=local pins each leg to the toolchain it installed: auto
 # would silently substitute the go.mod-resolved toolchain and measure
-# nothing. The caller pins `go-version` to a LISTED toolchain (its
-# audit canary's row), never `stable`: on `stable` a commit's
+# nothing. The caller pins `go-version` to a LISTED toolchain (a chain
+# row of its pinned gofresh's toolchain audit), never `stable`: on `stable` a commit's
 # releasability changes with Go's release calendar, not with the
 # commit — the first point release reds every release until a listing
 # lands. The go-next.yml legs are the early warning for that move.
