@@ -12,7 +12,8 @@ callers are.
 ## Workflows
 
 - `go-gate.yml` — the release gate: the plain tier (build, vet, the
-  fast `-short` tier, the full tier under the caller's measured
+  fast tier (`-short`, or the caller's `short-args` — a bare run where
+  the suites default to -short themselves), the full tier under the caller's measured
   timeout), the race tier (opt-in: the repository's own race
   selection), the records tier (opt-in: the requirement corpus compiles
   and every binding is current and resolved). The caller pins

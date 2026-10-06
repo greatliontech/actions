@@ -47,6 +47,11 @@ on:
         required: false
         type: boolean
         default: true
+      short-args:
+        description: the fast tier's go test arguments (`-short`; a repository whose suites default to -short under the plain selection passes an empty string, so the bare run is the one in which each suite pins that it took the default)
+        required: false
+        type: string
+        default: "-short"
       short-timeout:
         description: the fast tier's go test timeout
         required: false
@@ -118,7 +123,7 @@ jobs:
       - if: steps.rc.outputs.version != '' && inputs.vet-tags != ''
         run: go vet -tags ${{ inputs.vet-tags }} ${{ inputs.pattern }}
       - if: steps.rc.outputs.version != '' && inputs.short
-        run: go test -short ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.short-timeout }}
+        run: go test ${{ inputs.short-args }} ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.short-timeout }}
       - if: steps.rc.outputs.version != '' && inputs.pre-full != ''
         shell: bash
         run: ${{ inputs.pre-full }}
@@ -143,4 +148,4 @@ jobs:
       - if: inputs.vet-tags != ''
         run: go vet -tags ${{ inputs.vet-tags }} ${{ inputs.pattern }}
       - if: inputs.short
-        run: go test -short ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.short-timeout }}
+        run: go test ${{ inputs.short-args }} ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.short-timeout }}
