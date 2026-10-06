@@ -94,6 +94,11 @@ on:
         required: false
         type: number
         default: 0
+      race-shards:
+        description: the race tier's shards, a JSON list of {name, run} — one race job per entry over the caller's pattern, `run` a `-run` regex selecting that shard's tests (empty selects every test); the default is one shard of every test; a caller that shards must pin that the regexes partition its tests (each Test, Example and Fuzz function in exactly one shard, no regex with a subtest part), or a test runs twice or never; names are unique and non-empty (the first entry's name keys the build cache save)
+        required: false
+        type: string
+        default: '[{"name":"all","run":""}]'
       records:
         description: run the records tier (the requirement corpus compiles, every binding current and resolved)
         required: false
@@ -156,6 +161,14 @@ jobs:
     if: inputs.race
     runs-on: ubuntu-latest
     timeout-minutes: ${{ inputs.race-job-minutes == 0 && 1 || inputs.race-job-minutes }}
+    # One job per shard: the caller's regexes partition its tests, so
+    # the shards together are the race tier and the release waits for
+    # every one; each shard runs under the caller's whole budget.
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: ${{ fromJSON(inputs.race-shards) }}
+    name: race (${{ matrix.shard.name }})
     env:
       GOTOOLCHAIN: local
     steps:
@@ -182,9 +195,14 @@ jobs:
           restore-keys: |
             race-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             race-${{ runner.os }}-
-      - run: go test -race -p ${{ inputs.race-p }} ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.race-timeout }}
+      # The regex is single-quoted for the shell (a `|` alternation would
+      # otherwise be a pipe); a regex carrying a single quote is the
+      # caller's fault — its partition pin refuses one.
+      - run: go test -race -p ${{ inputs.race-p }} ${{ matrix.shard.run != '' && format('-run ''{0}''', matrix.shard.run) || '' }} ${{ inputs.pattern }} -count=1 -timeout=${{ inputs.race-timeout }}
+      # The race build cache is saved by the first shard alone (every
+      # shard restores it): the shards build the same binaries.
       - uses: actions/cache/save@v4
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && matrix.shard.name == fromJSON(inputs.race-shards)[0].name
         with:
           path: |
             ~/.cache/go-build
